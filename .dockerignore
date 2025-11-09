@@ -51,7 +51,7 @@ venv.bak/
 !.env.example
 
 # ============================================
-# LOGS & DATABASES
+# LOGS & DATABASES (lokal)
 # ============================================
 *.log
 *.db
@@ -67,18 +67,23 @@ README.md
 LICENSE
 docs/
 *.md
+!RAILWAY_SETUP.md
 
 # ============================================
-# DEVELOPMENT TOOLS
+# DEVELOPMENT ONLY
 # ============================================
-Makefile
 docker-compose.yml
 docker-compose.*.yml
-
-# ============================================
-# UNNECESSARY FOR RAILWAY
-# ============================================
-# These are not needed in the Docker image
-.dockerignore
 Dockerfile.dev
 .editorconfig
+.dockerignore
+Makefile
+
+# ============================================
+# RAILWAY SPECIFIC
+# ============================================
+# Keep these files for Railway:
+# - Procfile
+# - railway.toml
+# - requirements.txt
+# - All .py files
