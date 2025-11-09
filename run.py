@@ -7,34 +7,92 @@ from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
-# Import handlers - adjust paths if needed
 from handlers.admin.admin import admin_router
 from handlers.user.all_categories import all_categories_router
 from handlers.user.cart import cart_router
 from handlers.user.my_profile import my_profile_router
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(bot: Bot) -> None:
-    """Setup webhook on bot startup"""
+async def on_startup(bot: Bot):
     runtime_env = os.getenv("RUNTIME_ENVIRONMENT", "PROD").upper()
     
     if runtime_env == "DEV":
-        logger.info("Development mode - using polling")
+        logger.info("DEV mode - polling")
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted, polling active")
     else:
         webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
         base_url = os.getenv("BASE_WEBHOOK_URL")
         webhook_secret = os.getenv("WEBHOOK_SECRET_TOKEN")
         
         if not base_url:
-            raise ValueError("BASE_WEBHOOK_URL must be set!")
+            raise ValueError("BASE_WEBHOOK_URL required")
+        
+        webhook_url = base_url + webhook_path
+        
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+            secret_token=webhook_secret,
+            allowed_updates=["message", "callback_query"]
+        )
+        
+        info = await bot.get_webhook_info()
+        logger.info("Webhook: " + str(info.url))
+
+
+async def on_shutdown(bot: Bot):
+    logger.info("Shutting down")
+    await bot.session.close()
+
+
+def main():
+    token = os.getenv("TOKEN")
+    if not token:
+        raise ValueError("TOKEN required")
+    
+    runtime_env = os.getenv("RUNTIME_ENVIRONMENT", "PROD").upper()
+    
+    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher()
+    
+    dp.include_router(admin_router)
+    dp.include_router(all_categories_router)
+    dp.include_router(cart_router)
+    dp.include_router(my_profile_router)
+    
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    if runtime_env == "DEV":
+        logger.info("Starting polling mode")
+        asyncio.run(dp.start_polling(bot))
+    else:
+        logger.info("Starting webhook mode")
+        
+        host = os.getenv("WEBAPP_HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", "8080"))
+        webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+        
+        app = web.Application()
+        
+        handler = SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+            secret_token=os.getenv("WEBHOOK_SECRET_TOKEN")
+        )
+        
+        handler.register(app, path=webhook_path)
+        setup_application(app, dp, bot=bot)
+        
+        logger.info("Server starting on " + host + ":" + str(port))
+        web.run_app(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()            raise ValueError("BASE_WEBHOOK_URL must be set!")
         
         webhook_url = f"{base_url}{webhook_path}"
         
