@@ -94,7 +94,7 @@
     "pagination_next": "➡️ Nächste",
     "pagination_previous": "⬅️ Vorherige",
     "sol_top_up": "SOL",
-    "start_message": "👋 Hallo",
+    "start_message": "👋 Willkommen im Shop! Nutze die Buttons unten.",
     "usd_symbol": "$",
     "usd_text": "USD",
     "eur_symbol": "€",
@@ -108,6 +108,7 @@
     "gbp_text": "GBP"
   },
   "user": {
+    "welcome": "👋 Willkommen! Nutze die Buttons unten.",
     "all_categories": "🗂️ Alle Kategorien",
     "back_to_all_categories": "⤵️ Zurück zu allen Kategorien",
     "back_to_my_profile": "⤵️ Zurück zu meinem Profil",
