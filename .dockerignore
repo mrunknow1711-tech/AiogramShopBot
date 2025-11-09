@@ -1,3 +1,84 @@
+# ============================================
+# GIT & VERSION CONTROL
+# ============================================
+.git
+.gitignore
+.gitattributes
+.github
+
+# ============================================
+# PYTHON
+# ============================================
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# ============================================
+# VIRTUAL ENVIRONMENTS
+# ============================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================
+# IDE & EDITORS
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ============================================
+# ENVIRONMENT & SECRETS
+# ============================================
 .env
-.idea
-venv
+.env.*
+!.env.example
+
+# ============================================
+# LOGS & DATABASES
+# ============================================
+*.log
+*.db
+*.sqlite
+*.sqlite3
+logs/
+data/
+
+# ============================================
+# DOCUMENTATION
+# ============================================
+README.md
+LICENSE
+docs/
+*.md
+
+# ============================================
+# DEVELOPMENT TOOLS
+# ============================================
+Makefile
+docker-compose.yml
+docker-compose.*.yml
+
+# ============================================
+# UNNECESSARY FOR RAILWAY
+# ============================================
+# These are not needed in the Docker image
+.dockerignore
+Dockerfile.dev
+.editorconfig
