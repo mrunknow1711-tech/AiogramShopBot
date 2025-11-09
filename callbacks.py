@@ -166,3 +166,26 @@ class WalletCallback(BaseCallback, prefix="wallet"):
     @staticmethod
     def create(level: int, cryptocurrency: Cryptocurrency | None = None):
         return WalletCallback(level=level, cryptocurrency=cryptocurrency)
+
+
+# ===== NEUE CALLBACKS FÜR SHOP SYSTEM =====
+
+class ShopCallback(CallbackData, prefix="shop"):
+    """Callback für Shop-Navigation"""
+    level: int
+    category: str = ""
+    product: str = ""
+    action: str = ""
+    
+    @staticmethod
+    def create(level: int, category: str = "", product: str = "", action: str = ""):
+        return ShopCallback(level=level, category=category, product=product, action=action)
+
+
+class NavigationCallback(CallbackData, prefix="nav"):
+    """Callback für Navigation (Zurück/Abbrechen/Menü)"""
+    action: str
+    
+    @staticmethod
+    def create(action: str):
+        return NavigationCallback(action=action)
