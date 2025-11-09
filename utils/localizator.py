@@ -4,7 +4,7 @@ from enums.bot_entity import BotEntity
 
 
 class Localizator:
-    localization_filename = f"./l10n/{config.BOT_LANGUAGE}.json"
+    localization_filename = f"/bot/l10n/{config.BOT_LANGUAGE}.json"
 
     @staticmethod
     def get_text(entity: BotEntity, key: str) -> str:
