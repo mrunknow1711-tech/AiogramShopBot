@@ -1,20 +1,28 @@
+# ============================================
+# POLLING VERSION - NO WEBHOOK NEEDED
+# ============================================
+
 import traceback
-from aiogram import types, F, Router
+import asyncio
+from aiogram import types, F, Router, Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import ErrorEvent, Message, BufferedInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 import config
 from config import SUPPORT_LINK
 import logging
-from bot import dp, main, redis
+from db import create_db_and_tables
 from enums.bot_entity import BotEntity
 from middleware.database import DBSessionMiddleware
 from middleware.throttling_middleware import ThrottlingMiddleware
 from models.user import UserDTO
-from multibot import main as main_multibot
 from handlers.user.cart import cart_router
 from handlers.admin.admin import admin_router
 from handlers.user.all_categories import all_categories_router
@@ -24,7 +32,15 @@ from services.user import UserService
 from utils.custom_filters import IsUserExistFilter
 from utils.localizator import Localizator
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+redis = Redis(host=config.REDIS_HOST, password=config.REDIS_PASSWORD)
+bot = Bot(config.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher(storage=RedisStorage(redis))
+
 main_router = Router()
 
 
@@ -57,7 +73,6 @@ async def faq(message: types.message):
 @main_router.message(F.text == Localizator.get_text(BotEntity.USER, "help"), IsUserExistFilter())
 async def support(message: types.message):
     admin_keyboard_builder = InlineKeyboardBuilder()
-
     admin_keyboard_builder.button(text=Localizator.get_text(BotEntity.USER, "help_button"), url=SUPPORT_LINK)
     await message.answer(Localizator.get_text(BotEntity.USER, "help_string"),
                          reply_markup=admin_keyboard_builder.as_markup())
@@ -77,23 +92,51 @@ async def error_handler(event: ErrorEvent, message: Message):
     await NotificationService.send_to_admins(admin_notification, None)
 
 
-throttling_middleware = ThrottlingMiddleware(redis)
-users_routers = Router()
-users_routers.include_routers(
-    all_categories_router,
-    my_profile_router,
-    cart_router
-)
-users_routers.message.middleware(throttling_middleware)
-users_routers.callback_query.middleware(throttling_middleware)
-main_router.include_router(admin_router)
-main_router.include_routers(users_routers)
-main_router.message.middleware(DBSessionMiddleware())
-main_router.callback_query.middleware(DBSessionMiddleware())
+async def on_startup():
+    logging.info("Bot starting in POLLING mode...")
+    await create_db_and_tables()
+    logging.info("Database initialized")
+    
+    for admin in config.ADMIN_ID_LIST:
+        try:
+            await bot.send_message(admin, '✅ Bot is online (Polling mode)')
+        except Exception as e:
+            logging.warning(f"Could not notify admin {admin}: {e}")
+
+
+async def on_shutdown():
+    logging.warning('Shutting down...')
+    await dp.storage.close()
+    await bot.session.close()
+    logging.warning('Bye!')
+
+
+async def main():
+    throttling_middleware = ThrottlingMiddleware(redis)
+    users_routers = Router()
+    users_routers.include_routers(
+        all_categories_router,
+        my_profile_router,
+        cart_router
+    )
+    users_routers.message.middleware(throttling_middleware)
+    users_routers.callback_query.middleware(throttling_middleware)
+    main_router.include_router(admin_router)
+    main_router.include_routers(users_routers)
+    main_router.message.middleware(DBSessionMiddleware())
+    main_router.callback_query.middleware(DBSessionMiddleware())
+    
+    dp.include_router(main_router)
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    try:
+        logging.info("Starting polling...")
+        await dp.start_polling(bot, skip_updates=True)
+    except Exception as e:
+        logging.error(f"Error running bot: {e}")
+        traceback.print_exc()
+
 
 if __name__ == '__main__':
-    if config.MULTIBOT:
-        main_multibot(main_router)
-    else:
-        dp.include_router(main_router)
-        main()
+    asyncio.run(main())
