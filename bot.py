@@ -3,9 +3,8 @@ import traceback
 import os
 
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile
-from redis.asyncio import Redis
 import config
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -16,26 +15,52 @@ from fastapi.responses import JSONResponse
 from processing.processing import processing_router
 from services.notification import NotificationService
 
-# Import handlers
-from handlers.admin.admin import admin_router
-from handlers.user.all_categories import all_categories_router
-from handlers.user.cart import cart_router
-from handlers.user.my_profile import my_profile_router
-from handlers.user.start import start_router
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-redis = Redis(host=config.REDIS_HOST, password=config.REDIS_PASSWORD)
+# Initialize bot and dispatcher with MemoryStorage (no Redis needed)
 bot = Bot(config.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=RedisStorage(redis))
+dp = Dispatcher(storage=MemoryStorage())
 
-# Register routers
-dp.include_router(start_router)
-dp.include_router(admin_router)
-dp.include_router(all_categories_router)
-dp.include_router(cart_router)
-dp.include_router(my_profile_router)
+# Import and register ALL handlers
+logger.info("Registering handlers...")
+
+try:
+    from handlers.user.start import start_router
+    dp.include_router(start_router)
+    logger.info("✅ start_router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register start_router: {e}")
+
+try:
+    from handlers.admin.admin import admin_router
+    dp.include_router(admin_router)
+    logger.info("✅ admin_router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register admin_router: {e}")
+
+try:
+    from handlers.user.all_categories import all_categories_router
+    dp.include_router(all_categories_router)
+    logger.info("✅ all_categories_router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register all_categories_router: {e}")
+
+try:
+    from handlers.user.cart import cart_router
+    dp.include_router(cart_router)
+    logger.info("✅ cart_router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register cart_router: {e}")
+
+try:
+    from handlers.user.my_profile import my_profile_router
+    dp.include_router(my_profile_router)
+    logger.info("✅ my_profile_router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register my_profile_router: {e}")
+
+logger.info("All handlers registered!")
 
 app = FastAPI()
 app.include_router(processing_router)
@@ -58,17 +83,18 @@ async def webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
-    logger.info("Starting bot...")
+    logger.info("🚀 Starting bot...")
     await create_db_and_tables()
     await bot.set_webhook(
         url=config.WEBHOOK_URL,
         secret_token=config.WEBHOOK_SECRET_TOKEN
     )
-    logger.info(f"Webhook set to: {config.WEBHOOK_URL}")
+    logger.info(f"✅ Webhook set to: {config.WEBHOOK_URL}")
+    logger.info("💾 Using MemoryStorage (no Redis)")
     
     for admin in config.ADMIN_ID_LIST:
         try:
-            await bot.send_message(admin, '🚀 Bot is now online on Railway!')
+            await bot.send_message(admin, '🚀 Bot is online on Railway!')
         except Exception as e:
             logging.warning(f"Could not notify admin {admin}: {e}")
 
@@ -84,24 +110,17 @@ async def on_shutdown():
 @app.exception_handler(Exception)
 async def exception_handler(request: Request, exc: Exception):
     traceback_str = traceback.format_exc()
-    admin_notification = (
-        f"Critical error caused by {exc}\n\n"
-        f"Stack trace:\n{traceback_str}"
-    )
-    if len(admin_notification) > 4096:
-        byte_array = bytearray(admin_notification, 'utf-8')
-        admin_notification = BufferedInputFile(byte_array, "exception.txt")
-    await NotificationService.send_to_admins(admin_notification, None)
+    logger.error(f"Exception: {exc}\n{traceback_str}")
     return JSONResponse(
         status_code=500,
-        content={"message": f"An error occurred: {str(exc)}"},
+        content={"message": f"Error: {str(exc)}"},
     )
 
 
 def main() -> None:
     port = int(os.getenv("PORT", config.WEBAPP_PORT))
     host = config.WEBAPP_HOST
-    logger.info(f"Starting server on {host}:{port}")
+    logger.info(f"🌐 Starting server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 
 
