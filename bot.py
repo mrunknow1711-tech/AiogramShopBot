@@ -16,19 +16,27 @@ from fastapi.responses import JSONResponse
 from processing.processing import processing_router
 from services.notification import NotificationService
 
-# Redis Connection - Railway compatible
+# Redis Connection - EINFACHSTE METHODE
 REDIS_URL = os.getenv("REDIS_URL")
+
 if REDIS_URL:
-    # Railway Redis Plugin setzt REDIS_URL automatisch
+    # Railway setzt REDIS_URL automatisch!
     redis = Redis.from_url(REDIS_URL, decode_responses=False)
-    logging.info("✅ Connected to Redis via REDIS_URL")
+    logging.info(f"✅ Connected to Redis via REDIS_URL")
 else:
-    # Fallback auf separate Host/Password
-    redis = Redis(host=config.REDIS_HOST, password=config.REDIS_PASSWORD, decode_responses=False)
-    logging.info(f"✅ Connected to Redis at {config.REDIS_HOST}")
+    # Fallback: Nutze MemoryStorage wenn kein Redis verfügbar
+    logging.warning("⚠️ REDIS_URL not found, using MemoryStorage")
+    from aiogram.fsm.storage.memory import MemoryStorage
+    redis = None
 
 bot = Bot(config.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=RedisStorage(redis))
+
+# Storage je nach Redis-Verfügbarkeit
+if redis:
+    dp = Dispatcher(storage=RedisStorage(redis))
+else:
+    dp = Dispatcher(storage=MemoryStorage())
+
 app = FastAPI()
 app.include_router(processing_router)
 
@@ -39,7 +47,8 @@ async def root():
     return {
         "status": "online",
         "bot": "AiogramShopBot",
-        "version": "2.0-railway"
+        "version": "2.0-railway",
+        "storage": "Redis" if redis else "Memory"
     }
 
 
@@ -50,12 +59,22 @@ async def health_check():
         bot_info = await bot.get_me()
         webhook_info = await bot.get_webhook_info()
         
+        # Redis Health Check
+        redis_status = "disconnected"
+        if redis:
+            try:
+                await redis.ping()
+                redis_status = "connected"
+            except Exception as e:
+                redis_status = f"error: {str(e)}"
+        
         return {
             "status": "healthy",
             "bot_username": bot_info.username,
             "webhook_url": webhook_info.url,
             "pending_updates": webhook_info.pending_update_count,
-            "last_error": webhook_info.last_error_message if webhook_info.last_error_date else None
+            "redis_status": redis_status,
+            "storage_type": "Redis" if redis else "Memory"
         }
     except Exception as e:
         return {
@@ -105,13 +124,25 @@ async def on_startup():
     logging.info(f"📍 Host: {config.WEBAPP_HOST}:{config.WEBAPP_PORT}")
     logging.info(f"🌐 Webhook: {config.WEBHOOK_URL}")
     
+    # Check Redis
+    if redis:
+        try:
+            await redis.ping()
+            logging.info("✅ Redis connection successful")
+        except Exception as e:
+            logging.warning(f"⚠️ Redis connection failed: {e}")
+    else:
+        logging.info("ℹ️ Using MemoryStorage (no Redis)")
+    
     # Notify admins
+    storage_info = "Redis ✅" if redis else "Memory (Redis nicht verfügbar)"
     startup_message = (
         f"🤖 <b>Bot Started!</b>\n\n"
         f"👤 Bot: @{bot_info.username}\n"
         f"🌐 Webhook: {config.WEBHOOK_URL}\n"
         f"📊 Environment: {config.RUNTIME_ENVIRONMENT.value}\n"
-        f"💾 Database: {config.DB_NAME}"
+        f"💾 Database: {config.DB_NAME}\n"
+        f"🗄️ Storage: {storage_info}"
     )
     
     for admin in config.ADMIN_ID_LIST:
@@ -126,7 +157,8 @@ async def on_shutdown():
     logging.warning('🛑 Shutting down...')
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.storage.close()
-    await redis.close()
+    if redis:
+        await redis.close()
     logging.warning('👋 Bye!')
 
 
