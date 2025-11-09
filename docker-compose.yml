@@ -1,65 +1,125 @@
-services:
-  caddy:
-    image: lucaslorentz/caddy-docker-proxy:2.9.1-alpine
-    ports:
-      - 80:80
-      - 443:443
-    environment:
-      - CADDY_INGRESS_NETWORKS=caddy
-    networks:
-      - caddy
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./caddy/caddy_data:/data
-    restart: always
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+version: '3.8'
 
+services:
+  # ============================================
+  # TELEGRAM BOT SERVICE
+  # ============================================
   bot:
     build:
       context: .
-    container_name: 'AiogramShopBot'
-    env_file:
-      - .env
-    labels:
-      caddy: YOUR-DOMAIN-GOES-HERE
-      caddy.reverse_proxy: "bot:5000"
-    depends_on:
-      - caddy
-    networks:
-      - caddy
+      dockerfile: Dockerfile
+    container_name: aiogram_shop_bot
+    restart: unless-stopped
+    
+    environment:
+      # Bot Configuration
+      - TOKEN=${TOKEN}
+      - ADMIN_ID_LIST=${ADMIN_ID_LIST}
+      - SUPPORT_LINK=${SUPPORT_LINK}
+      
+      # Webhook Configuration (Railway)
+      - BASE_WEBHOOK_URL=${BASE_WEBHOOK_URL}
+      - WEBHOOK_PATH=${WEBHOOK_PATH:-/webhook}
+      - WEBHOOK_SECRET_TOKEN=${WEBHOOK_SECRET_TOKEN}
+      
+      # Server Configuration
+      - WEBAPP_HOST=0.0.0.0
+      - WEBAPP_PORT=${PORT:-8000}
+      - RUNTIME_ENVIRONMENT=PROD
+      
+      # Database
+      - DB_NAME=${DB_NAME:-database.db}
+      - DB_ENCRYPTION=${DB_ENCRYPTION:-false}
+      - DB_PASS=${DB_PASS:-}
+      
+      # Redis
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=${REDIS_DB:-0}
+      
+      # Payment API
+      - KRYPTO_EXPRESS_API_KEY=${KRYPTO_EXPRESS_API_KEY}
+      - KRYPTO_EXPRESS_API_URL=${KRYPTO_EXPRESS_API_URL}
+      - KRYPTO_EXPRESS_API_SECRET=${KRYPTO_EXPRESS_API_SECRET}
+      
+      # Bot Settings
+      - PAGE_ENTRIES=${PAGE_ENTRIES:-8}
+      - BOT_LANGUAGE=${BOT_LANGUAGE:-en}
+      - CURRENCY=${CURRENCY:-USD}
+      - MULTIBOT=${MULTIBOT:-false}
+    
     ports:
-      - "4040:4040"
-      - "5000:5000" # ${WEBAPP_PORT}:${WEBAPP_PORT}
-    expose:
-      - 4040
-      - 5000 # ${WEBAPP_PORT}
+      - "${PORT:-8000}:${PORT:-8000}"
+    
     volumes:
-      - ./AiogramShopBot:/bot/data # endswith your database name
-    command: [ "python", "-u", "run.py" ]
-    restart: always
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    depends_on:
+      - redis
+    
+    networks:
+      - bot_network
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:${PORT:-8000}/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # ============================================
+  # REDIS SERVICE
+  # ============================================
   redis:
-    image: redis:latest
-    container_name: redis
-    command:
-      - /bin/sh
-      - -c
-      - redis-server --requirepass "$${REDIS_PASSWORD:?REDIS_PASSWORD variable is not set}"
+    image: redis:7-alpine
+    container_name: bot_redis
+    restart: unless-stopped
+    
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    
     ports:
       - "6379:6379"
-    env_file:
-      - .env
+    
     volumes:
       - redis_data:/data
-    restart: always
+    
     networks:
-      - caddy
+      - bot_network
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
+# ============================================
+# VOLUMES
+# ============================================
 volumes:
-  AiogramShopBot:
-  caddy_data:
   redis_data:
+    driver: local
 
+# ============================================
+# NETWORKS
+# ============================================
 networks:
-  caddy:
+  bot_network:
+    driver: bridge
+
+# ============================================
+# NOTES FOR RAILWAY DEPLOYMENT
+# ============================================
+# 1. Railway automatically provides:
+#    - HTTPS with SSL certificate
+#    - Public URL (set as BASE_WEBHOOK_URL)
+#    - PORT environment variable
+#
+# 2. No ngrok or Caddy needed!
+#
+# 3. For Railway, you can use their Redis addon instead
+#    of running Redis in Docker. Just set REDIS_URL.
+#
+# 4. Railway will use the 'bot' service automatically.
+#    Remove Redis service if using Railway Redis addon.
