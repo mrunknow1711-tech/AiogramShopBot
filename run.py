@@ -11,6 +11,7 @@ from handlers.admin.admin import admin_router
 from handlers.user.all_categories import all_categories_router
 from handlers.user.cart import cart_router
 from handlers.user.my_profile import my_profile_router
+from handlers.user.start import start_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ def main():
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     
+    dp.include_router(start_router)
     dp.include_router(admin_router)
     dp.include_router(all_categories_router)
     dp.include_router(cart_router)
