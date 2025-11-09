@@ -1,5 +1,5 @@
 """
-Start command handler - ULTRA SIMPLE VERSION
+Start command handler with Localizator integration
 Place this file in: handlers/user/start.py
 """
 
@@ -7,6 +7,9 @@ import os
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+
+from enums.bot_entity import BotEntity
+from utils.localizator import Localizator
 
 start_router = Router()
 
@@ -20,25 +23,38 @@ async def start_command(message: Message):
     admin_ids = os.getenv("ADMIN_ID_LIST", "").split(",")
     is_admin = str(user_id) in [aid.strip() for aid in admin_ids if aid.strip()]
     
-    # Create keyboard
+    # Create keyboard with Localizator texts
     if is_admin:
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="🛍️ Alle Kategorien"), KeyboardButton(text="👤 Mein Profil")],
-                [KeyboardButton(text="🛒 Warenkorb"), KeyboardButton(text="🔑 Admin Menu")]
+                [
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "all_categories")),
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "my_profile"))
+                ],
+                [
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "cart")),
+                    KeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "menu"))
+                ]
             ],
             resize_keyboard=True
         )
-        text = "👋 Willkommen Admin!\n\nNutze die Buttons unten:"
+        welcome_text = Localizator.get_text(BotEntity.USER, "welcome")
+        text = f"👋 Willkommen Admin!\n\n{welcome_text}"
     else:
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="🛍️ Alle Kategorien"), KeyboardButton(text="👤 Mein Profil")],
-                [KeyboardButton(text="🛒 Warenkorb"), KeyboardButton(text="ℹ️ Hilfe")]
+                [
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "all_categories")),
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "my_profile"))
+                ],
+                [
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "cart")),
+                    KeyboardButton(text=Localizator.get_text(BotEntity.USER, "help"))
+                ]
             ],
             resize_keyboard=True
         )
-        text = "👋 Willkommen im Shop!\n\nNutze die Buttons unten:"
+        text = Localizator.get_text(BotEntity.USER, "welcome")
     
     await message.answer(text, reply_markup=keyboard)
 
@@ -54,5 +70,4 @@ Nutze die Menü-Buttons zur Navigation.
 
 Support: {support}
     """
-    await message.answer(text) 
-
+    await message.answer(text)
