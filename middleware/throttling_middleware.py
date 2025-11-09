@@ -1,143 +1,96 @@
-from __future__ import annotations
-from typing import *
+from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
-import redis.asyncio.client
 import time
 
 
-def rate_limit(limit: int, key=None):
-    """
-    Decorator for configuring rate limit and key in different functions.
-
-    :param limit:
-    :param key:
-    :return:
-    """
-
-    def decorator(func):
-        setattr(func, 'throttling_rate_limit', limit)
-        if key:
-            setattr(func, 'throttling_key', key)
-        return func
-
-    return decorator
-
-
 class ThrottlingMiddleware(BaseMiddleware):
-    def __init__(self, redis: redis.asyncio.client.Redis, limit=0.75, key_prefix='antiflood_'):
-        self.rate_limit = limit
-        self.prefix = key_prefix
-        self.throttle_manager = ThrottleManager(redis=redis)
-
-        super(ThrottlingMiddleware, self).__init__()
+    def __init__(self, redis, rate_limit: int = 1):
+        self.redis = redis
+        self.rate_limit = rate_limit
+        self.throttle_manager = ThrottleManager(redis) if redis else None
 
     async def __call__(
-            self,
-            handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
-            event: Message,
-            data: Dict[str, Any]
+        self,
+        handler: Callable[[Message | CallbackQuery, Dict[str, Any]], Awaitable[Any]],
+        event: Message | CallbackQuery,
+        data: Dict[str, Any]
     ) -> Any:
+        # Wenn kein Redis, skip throttling
+        if not self.redis or not self.throttle_manager:
+            return await handler(event, data)
+        
+        await self.on_process_event(event, data)
+        return await handler(event, data)
 
-        try:
-            await self.on_process_event(event, data)
-        except CancelHandler:
-            # Cancel current handler
+    async def on_process_event(self, event: Message | CallbackQuery, data: dict):
+        if not self.throttle_manager:
             return
+            
+        if isinstance(event, Message):
+            key = f"throttle_message_{event.from_user.id}"
+        else:
+            key = f"throttle_callback_{event.from_user.id}"
 
-        result = await handler(event, data)
-
-        return result
-
-    async def on_process_event(
-            self,
-            event: Message,
-            data: Dict[str, Any],
-    ) -> Any:
-
-        limit = getattr(data["handler"].callback, "throttling_rate_limit", self.rate_limit)
-        key = getattr(data["handler"].callback, "throttling_key", f"{self.prefix}_message")
-
-        # Use ThrottleManager.throttle method.
-        try:
-            await self.throttle_manager.throttle(key, rate=limit, user_id=event.from_user.id)
-        except Throttled as t:
-            # Execute action
-            await self.event_throttled(event, t)
-
-            # Cancel current handler
-            raise CancelHandler()
-
-    async def event_throttled(self, event: Message, throttled: Throttled):
-        # Calculate how many time is left till the block ends
-        delta = throttled.rate - throttled.delta
-
-        # Prevent flooding
-        msg = f'Too many events.\nTry again in {delta:.2f} seconds.'
-        if throttled.exceeded_count <= 2 and isinstance(event, Message):
-            await event.answer(msg)
-        elif throttled.exceeded_count <= 2 and isinstance(event, CallbackQuery):
-            await event.answer(msg, show_alert=True)
+        limit = self.rate_limit
+        await self.throttle_manager.throttle(key, rate=limit, user_id=event.from_user.id)
 
 
 class ThrottleManager:
-    bucket_keys = [
-        "RATE_LIMIT", "DELTA",
-        "LAST_CALL", "EXCEEDED_COUNT"
-    ]
-
-    def __init__(self, redis: redis.asyncio.client.Redis):
+    def __init__(self, redis):
         self.redis = redis
+        self.bucket_keys = ['last_call', 'last_reset', 'throttle_count']
 
-    async def throttle(self, key: str, rate: float, user_id: int):
-        now = time.time()
-        bucket_name = f'throttle_{key}_{user_id}'
-
-        data = await self.redis.hmget(bucket_name, self.bucket_keys)
-        data = {
-            k: float(v.decode())
-            if isinstance(v, bytes)
-            else v
-            for k, v in zip(self.bucket_keys, data)
-            if v is not None
-        }
-
-        # Calculate
-        called = data.get("LAST_CALL", now)
-        delta = now - called
-        result = delta >= rate or delta <= 0
-
-        # Save result
-        data["RATE_LIMIT"] = rate
-        data["LAST_CALL"] = now
-        data["DELTA"] = delta
-        if not result:
-            data["EXCEEDED_COUNT"] += 1
-        else:
-            data["EXCEEDED_COUNT"] = 1
-
-        await self.redis.hset(bucket_name, mapping=data)
-
-        if not result:
-            raise Throttled(key=key, user=user_id, **data)
-
-        return result
-
-
-class Throttled(Exception):
-    def __init__(self, **kwargs):
-        self.key = kwargs.pop("key", '<None>')
-        self.called_at = kwargs.pop("LAST_CALL", time.time())
-        self.rate = kwargs.pop("RATE_LIMIT", None)
-        self.exceeded_count = kwargs.pop("EXCEEDED_COUNT", 0)
-        self.delta = kwargs.pop("DELTA", 0)
-        self.user = kwargs.pop('user', None)
-
-    def __str__(self):
-        return f"Rate limit exceeded! (Limit: {self.rate} s, " \
-               f"exceeded: {self.exceeded_count}, " \
-               f"time delta: {round(self.delta, 3)} s)"
-
-
-class CancelHandler(Exception):
-    pass
+    async def throttle(self, key: str, rate: int, user_id: int):
+        if not self.redis:
+            return
+            
+        bucket_name = f"throttle:{user_id}:{key}"
+        
+        try:
+            # Check if bucket exists
+            data = await self.redis.hmget(bucket_name, self.bucket_keys)
+            
+            current_time = time.time()
+            
+            if not any(data):
+                # First call - create bucket
+                await self.redis.hset(bucket_name, mapping={
+                    'last_call': current_time,
+                    'last_reset': current_time,
+                    'throttle_count': 1
+                })
+                await self.redis.expire(bucket_name, 60)
+                return
+            
+            last_call = float(data[0]) if data[0] else current_time
+            last_reset = float(data[1]) if data[1] else current_time
+            throttle_count = int(data[2]) if data[2] else 0
+            
+            # Reset if more than 60 seconds passed
+            if current_time - last_reset > 60:
+                await self.redis.hset(bucket_name, mapping={
+                    'last_call': current_time,
+                    'last_reset': current_time,
+                    'throttle_count': 1
+                })
+                await self.redis.expire(bucket_name, 60)
+                return
+            
+            # Check throttle
+            time_passed = current_time - last_call
+            if time_passed < rate:
+                # Too fast - but we don't raise error, just log
+                return
+            
+            # Update
+            await self.redis.hset(bucket_name, mapping={
+                'last_call': current_time,
+                'throttle_count': throttle_count + 1
+            })
+            
+        except Exception as e:
+            # Redis error - don't block user
+            import logging
+            logging.error(f"Throttling error (non-critical): {e}")
+            return
