@@ -3,7 +3,8 @@ Start command handler for user registration
 Place this file in: handlers/user/start.py
 """
 
-from aiogram import Router, types, F
+import os
+from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,24 +53,16 @@ def get_admin_menu_keyboard():
 
 
 @start_router.message(CommandStart())
-async def start_command(message: Message, session: AsyncSession | Session):
+async def start_command(message: Message, session: AsyncSession | Session = None):
     """
     Handle /start command
     Register new users or welcome back existing users
     """
     user_id = message.from_user.id
     
-    # Check if user exists in database
-    # If your project has a UserService, use it here:
-    # from services.user import UserService
-    # user_exists = await UserService.get_user(user_id, session)
-    
-    # For now, simple welcome message
-    # Adjust based on your project's user registration logic
-    
     # Check if user is admin
     admin_ids = os.getenv("ADMIN_ID_LIST", "").split(",")
-    is_admin = str(user_id) in admin_ids
+    is_admin = str(user_id) in [aid.strip() for aid in admin_ids if aid.strip()]
     
     if is_admin:
         keyboard = get_admin_menu_keyboard()
@@ -89,14 +82,14 @@ async def help_command(message: Message):
     """Handle help button/command"""
     support_link = os.getenv("SUPPORT_LINK", "https://t.me/support")
     help_text = f"""
-ℹ️ **Help & Support**
+ℹ️ **Hilfe & Support**
 
-Use the menu buttons to navigate:
-• 🛍️ All Categories - Browse products
-• 👤 My Profile - View balance & history
-• 🛒 Cart - Checkout items
+Nutze die Menü-Buttons zur Navigation:
+• 🛍️ Alle Kategorien - Produkte durchsuchen
+• 👤 Mein Profil - Balance & Verlauf anzeigen
+• 🛒 Warenkorb - Artikel kaufen
 
-Need assistance?
-Contact support: {support_link}
+Brauchst du Hilfe?
+Support kontaktieren: {support_link}
     """
     await message.answer(help_text)
