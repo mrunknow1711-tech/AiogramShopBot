@@ -1,142 +1,120 @@
-# ============================================
-# POLLING VERSION - NO WEBHOOK NEEDED
-# ============================================
-
-import traceback
 import asyncio
-from aiogram import types, F, Router, Bot, Dispatcher
-from aiogram.filters import Command
-from aiogram.types import ErrorEvent, Message, BufferedInputFile
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+import logging
+import os
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.redis import RedisStorage
-from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
-import config
-from config import SUPPORT_LINK
-import logging
-from db import create_db_and_tables
-from enums.bot_entity import BotEntity
-from middleware.database import DBSessionMiddleware
-from middleware.throttling_middleware import ThrottlingMiddleware
-from models.user import UserDTO
-from handlers.user.cart import cart_router
-from handlers.admin.admin import admin_router
-from handlers.user.all_categories import all_categories_router
-from handlers.user.my_profile import my_profile_router
-from services.notification import NotificationService
-from services.user import UserService
-from utils.custom_filters import IsUserExistFilter
-from utils.localizator import Localizator
+# Import your handlers and routers here
+# from handlers import router
+# from database import init_db
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-redis = Redis(host=config.REDIS_HOST, password=config.REDIS_PASSWORD)
-bot = Bot(config.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=RedisStorage(redis))
-
-main_router = Router()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-@main_router.message(Command(commands=["start", "help"]))
-async def start(message: types.message, session: AsyncSession | Session):
-    all_categories_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.USER, "all_categories"))
-    my_profile_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.USER, "my_profile"))
-    faq_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.USER, "faq"))
-    help_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.USER, "help"))
-    admin_menu_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "menu"))
-    cart_button = types.KeyboardButton(text=Localizator.get_text(BotEntity.USER, "cart"))
-    telegram_id = message.from_user.id
-    await UserService.create_if_not_exist(UserDTO(
-        telegram_username=message.from_user.username,
-        telegram_id=telegram_id
-    ), session)
-    keyboard = [[all_categories_button, my_profile_button], [faq_button, help_button],
-                [cart_button]]
-    if telegram_id in config.ADMIN_ID_LIST:
-        keyboard.append([admin_menu_button])
-    start_markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, keyboard=keyboard)
-    await message.answer(Localizator.get_text(BotEntity.COMMON, "start_message"), reply_markup=start_markup)
-
-
-@main_router.message(F.text == Localizator.get_text(BotEntity.USER, "faq"), IsUserExistFilter())
-async def faq(message: types.message):
-    await message.answer(Localizator.get_text(BotEntity.USER, "faq_string"))
-
-
-@main_router.message(F.text == Localizator.get_text(BotEntity.USER, "help"), IsUserExistFilter())
-async def support(message: types.message):
-    admin_keyboard_builder = InlineKeyboardBuilder()
-    admin_keyboard_builder.button(text=Localizator.get_text(BotEntity.USER, "help_button"), url=SUPPORT_LINK)
-    await message.answer(Localizator.get_text(BotEntity.USER, "help_string"),
-                         reply_markup=admin_keyboard_builder.as_markup())
-
-
-@main_router.error(F.update.message.as_("message"))
-async def error_handler(event: ErrorEvent, message: Message):
-    await message.answer("Oops, something went wrong!")
-    traceback_str = traceback.format_exc()
-    admin_notification = (
-        f"Critical error caused by {event.exception}\n\n"
-        f"Stack trace:\n{traceback_str}"
-    )
-    if len(admin_notification) > 4096:
-        byte_array = bytearray(admin_notification, 'utf-8')
-        admin_notification = BufferedInputFile(byte_array, "exception.txt")
-    await NotificationService.send_to_admins(admin_notification, None)
-
-
-async def on_startup():
-    logging.info("Bot starting in POLLING mode...")
-    await create_db_and_tables()
-    logging.info("Database initialized")
+async def on_startup(bot: Bot) -> None:
+    """Setup webhook on bot startup"""
+    runtime_env = os.getenv("RUNTIME_ENVIRONMENT", "PROD").upper()
     
-    for admin in config.ADMIN_ID_LIST:
-        try:
-            await bot.send_message(admin, '✅ Bot is online (Polling mode)')
-        except Exception as e:
-            logging.warning(f"Could not notify admin {admin}: {e}")
+    if runtime_env == "DEV":
+        logger.info("🔧 Development mode - using polling instead of webhook")
+        # For local development, delete webhook and use polling
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook deleted, polling mode active")
+    else:
+        # Production mode - Railway/Cloud deployment
+        webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+        base_url = os.getenv("BASE_WEBHOOK_URL")
+        webhook_secret = os.getenv("WEBHOOK_SECRET_TOKEN")
+        
+        if not base_url:
+            raise ValueError("BASE_WEBHOOK_URL must be set for production deployment!")
+        
+        webhook_url = f"{base_url}{webhook_path}"
+        
+        # Set webhook
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+            secret_token=webhook_secret,
+            allowed_updates=["message", "callback_query", "inline_query"]
+        )
+        
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"✅ Webhook configured: {webhook_info.url}")
+        logger.info(f"🌐 Listening on: {webhook_path}")
 
 
-async def on_shutdown():
-    logging.warning('Shutting down...')
-    await dp.storage.close()
+async def on_shutdown(bot: Bot) -> None:
+    """Cleanup on shutdown"""
+    logger.info("🛑 Shutting down bot...")
     await bot.session.close()
-    logging.warning('Bye!')
 
 
-async def main():
-    throttling_middleware = ThrottlingMiddleware(redis)
-    users_routers = Router()
-    users_routers.include_routers(
-        all_categories_router,
-        my_profile_router,
-        cart_router
-    )
-    users_routers.message.middleware(throttling_middleware)
-    users_routers.callback_query.middleware(throttling_middleware)
-    main_router.include_router(admin_router)
-    main_router.include_routers(users_routers)
-    main_router.message.middleware(DBSessionMiddleware())
-    main_router.callback_query.middleware(DBSessionMiddleware())
+def main() -> None:
+    """Main entry point"""
+    # Get configuration from environment
+    token = os.getenv("TOKEN")
+    if not token:
+        raise ValueError("TOKEN environment variable is required!")
     
-    dp.include_router(main_router)
+    runtime_env = os.getenv("RUNTIME_ENVIRONMENT", "PROD").upper()
+    
+    # Initialize bot and dispatcher
+    bot = Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    
+    dp = Dispatcher()
+    
+    # Register your routers here
+    # dp.include_router(router)
+    
+    # Register startup/shutdown handlers
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     
+    if runtime_env == "DEV":
+        # Development mode - use polling
+        logger.info("🚀 Starting bot in DEVELOPMENT mode (polling)...")
+        asyncio.run(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
+    else:
+        # Production mode - use webhook
+        logger.info("🚀 Starting bot in PRODUCTION mode (webhook)...")
+        
+        webapp_host = os.getenv("WEBAPP_HOST", "0.0.0.0")
+        webapp_port = int(os.getenv("PORT", os.getenv("WEBAPP_PORT", "8000")))
+        webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+        
+        # Setup aiohttp application
+        app = web.Application()
+        
+        # Create webhook handler
+        webhook_requests_handler = SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+            secret_token=os.getenv("WEBHOOK_SECRET_TOKEN")
+        )
+        
+        # Register webhook handler
+        webhook_requests_handler.register(app, path=webhook_path)
+        
+        # Setup application
+        setup_application(app, dp, bot=bot)
+        
+        # Run web application
+        logger.info(f"📡 Starting webhook server on {webapp_host}:{webapp_port}")
+        web.run_app(app, host=webapp_host, port=webapp_port)
+
+
+if __name__ == "__main__":
     try:
-        logging.info("Starting polling...")
-        await dp.start_polling(bot, skip_updates=True)
+        main()
+    except KeyboardInterrupt:
+        logger.info("👋 Bot stopped by user")
     except Exception as e:
-        logging.error(f"Error running bot: {e}")
-        traceback.print_exc()
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+        logger.error(f"❌ Fatal error: {e}", exc_info=True)
