@@ -1,95 +1,58 @@
 """
-Start command handler for user registration
+Start command handler - ULTRA SIMPLE VERSION
 Place this file in: handlers/user/start.py
 """
 
 import os
-from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram import Router
+from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
-
-from enums.bot_entity import BotEntity
-from utils.localizator import Localizator
 
 start_router = Router()
 
 
-def get_main_menu_keyboard():
-    """Create main menu keyboard for users"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "all_categories")),
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "my_profile"))
-            ],
-            [
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "cart")),
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "help"))
-            ]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
-
-
-def get_admin_menu_keyboard():
-    """Create menu keyboard for admin users"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "all_categories")),
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "my_profile"))
-            ],
-            [
-                KeyboardButton(text=Localizator.get_text(BotEntity.USER, "cart")),
-                KeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "menu"))
-            ]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
-
-
-@start_router.message(CommandStart())
-async def start_command(message: Message, session: AsyncSession | Session = None):
-    """
-    Handle /start command
-    Register new users or welcome back existing users
-    """
+@start_router.message(Command("start"))
+async def start_command(message: Message):
+    """Handle /start command"""
     user_id = message.from_user.id
     
-    # Check if user is admin
+    # Check if admin
     admin_ids = os.getenv("ADMIN_ID_LIST", "").split(",")
     is_admin = str(user_id) in [aid.strip() for aid in admin_ids if aid.strip()]
     
+    # Create keyboard
     if is_admin:
-        keyboard = get_admin_menu_keyboard()
-        welcome_text = f"👋 Welcome Admin!\n\n{Localizator.get_text(BotEntity.USER, 'welcome')}"
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🛍️ Alle Kategorien"), KeyboardButton(text="👤 Mein Profil")],
+                [KeyboardButton(text="🛒 Warenkorb"), KeyboardButton(text="🔑 Admin Menu")]
+            ],
+            resize_keyboard=True
+        )
+        text = "👋 Willkommen Admin!\n\nNutze die Buttons unten:"
     else:
-        keyboard = get_main_menu_keyboard()
-        welcome_text = Localizator.get_text(BotEntity.USER, "welcome")
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🛍️ Alle Kategorien"), KeyboardButton(text="👤 Mein Profil")],
+                [KeyboardButton(text="🛒 Warenkorb"), KeyboardButton(text="ℹ️ Hilfe")]
+            ],
+            resize_keyboard=True
+        )
+        text = "👋 Willkommen im Shop!\n\nNutze die Buttons unten:"
     
-    await message.answer(
-        text=welcome_text,
-        reply_markup=keyboard
-    )
+    await message.answer(text, reply_markup=keyboard)
 
 
-@start_router.message(F.text == Localizator.get_text(BotEntity.USER, "help"))
+@start_router.message(Command("help"))
 async def help_command(message: Message):
-    """Handle help button/command"""
-    support_link = os.getenv("SUPPORT_LINK", "https://t.me/support")
-    help_text = f"""
-ℹ️ **Hilfe & Support**
+    """Handle /help command"""
+    support = os.getenv("SUPPORT_LINK", "https://t.me/support")
+    text = f"""
+ℹ️ Hilfe
 
-Nutze die Menü-Buttons zur Navigation:
-• 🛍️ Alle Kategorien - Produkte durchsuchen
-• 👤 Mein Profil - Balance & Verlauf anzeigen
-• 🛒 Warenkorb - Artikel kaufen
+Nutze die Menü-Buttons zur Navigation.
 
-Brauchst du Hilfe?
-Support kontaktieren: {support_link}
+Support: {support}
     """
-    await message.answer(help_text)
+    await message.answer(text) 
+
